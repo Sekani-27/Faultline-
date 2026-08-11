@@ -1,108 +1,165 @@
-# vinext-starter
+# Faultline
 
-A clean full-stack starter running on
-[vinext](https://github.com/cloudflare/vinext), with optional Cloudflare D1 and
-Drizzle support.
+**A deterministic causal-evidence system for investigating production failures.**
 
-## Prerequisites
+[Live product](https://faultline-evidence.ntandovuyanmiya.chatgpt.site) · [Connected evidence source](https://github.com/Sekani-27/Nexara)
 
-- Node.js `>=22.13.0`
-- Linux with `flock`, `curl`, and GNU `timeout`
+Production incidents generate plenty of data—logs, metrics, deployments, traces and alerts—but data alone does not establish why a system failed.
 
-## Sites Lifecycle
+Faultline turns those scattered records into an inspectable argument. It tests competing explanations against shared evidence, exposes contradictions and missing observations, and produces a reviewable evidence package without allowing an AI model to decide the cause.
 
-The Sites lifecycle CLI runs the locked dependency install before returning this checkout. Edit the source under `app/`, then checkpoint when a coherent milestone is ready to inspect or share. The remote Sites builder runs `npm run build` against the pushed commit. Do not repeat install or build as a normal pre-checkpoint step.
+> Faultline does for production failure claims what a test suite does for software behaviour: it makes the reasoning explicit, repeatable and challengeable.
 
-This starter does not use `wrangler.jsonc`.
+## The problem
 
-`install:ci` is intentionally a single, non-retrying `npm ci`. It refuses a concurrent install for the same project, consumes a matching image-seeded npm cache with `--prefer-offline` while retaining registry fallback for a missing cache object, otherwise downloads and verifies the complete vinext tarball recorded in `package-lock.json`, limits npm to one socket, and terminates a stalled install. `build` applies a short timeout and then validates the Sites artifact. These helpers target Linux and use GNU `timeout`; they are not native macOS scripts.
+Post-incident analysis often collapses into a confident narrative: a deployment happened before an outage, rollback appeared to restore service, and therefore the deployment caused the outage. That conclusion may be correct, but sequence is not causality.
 
-Scripts that need writable project-scoped home, npm, XDG, and temporary paths use `scripts/sites-env.sh`. The `dev` and `start` scripts honor the caller's runtime environment and keep Wrangler logs inside the checkout. The generated `.sites-runtime/` directory is disposable and ignored by Git.
+Teams need to distinguish what was directly observed, what was inferred, which evidence contradicts a claim, what the system could not observe, and who accepted the final conclusion. Faultline makes those distinctions visible.
 
-## Included Shape
+## What the product does
 
-- edit site code under `app/`
-- `app/chatgpt-auth.ts` provides optional dispatch-owned ChatGPT sign-in helpers
-- `.openai/hosting.json` declares optional Sites D1 and R2 bindings
-- `vite.config.ts` simulates declared bindings for local development
-- `db/index.ts` reads the D1 binding from the Cloudflare Worker environment
-- `db/schema.ts` starts intentionally empty
-- `examples/d1/` contains an optional D1 example surface
-- `drizzle.config.ts` supports local migration generation when needed
+For every incident, Faultline:
 
-## Workspace Auth Headers
+1. Normalizes observations from engineering systems into a canonical evidence model.
+2. Evaluates competing causal claims using transparent rules.
+3. Records supporting evidence, contradictions and required-but-missing signals.
+4. Calculates a bounded claim status and confidence level.
+5. Converts missing observability into **Evidence Debt**.
+6. Preserves a human review decision and investigation state.
+7. Generates an Incident Evidence Package.
 
-OpenAI workspace sites can read the current user's email from
-`oai-authenticated-user-email`.
+The prototype includes three incident patterns:
 
-SIWC-authenticated workspace sites may also receive
-`oai-authenticated-user-full-name` when the user's SIWC profile has a non-empty
-`name` claim. The full-name value is percent-encoded UTF-8 and is accompanied by
-`oai-authenticated-user-full-name-encoding: percent-encoded-utf-8`.
+| Scenario | Leading explanation |
+| --- | --- |
+| Checkout failures after release v2.8.1 | Production change |
+| Flash-sale capacity exhaustion | Traffic surge |
+| Regional payment gateway degradation | Shared dependency |
 
-Treat the full name as optional and fall back to email when it is absent:
+All three scenarios pass through the same rule engine. The result changes because the evidence changes—not because the interface contains a predetermined verdict.
 
-```tsx
-import { headers } from "next/headers";
+## Deterministic by design
 
-export default async function Home() {
-  const requestHeaders = await headers();
-  const email = requestHeaders.get("oai-authenticated-user-email");
-  const encodedFullName = requestHeaders.get("oai-authenticated-user-full-name");
-  const fullName =
-    encodedFullName &&
-    requestHeaders.get("oai-authenticated-user-full-name-encoding") ===
-      "percent-encoded-utf-8"
-      ? decodeURIComponent(encodedFullName)
-      : null;
+Faultline does not use an LLM to decide what caused an incident.
 
-  const displayName = fullName ?? email;
-  // ...
+Each claim defines required signals, predicted observations, fixed support and contradiction weights, a score boundary and a confidence boundary.
+
+```ts
+{
+  signal: "rollback_recovery",
+  expected: true,
+  weight: 3,
+  rationale: "Reversal preceded recovery"
 }
 ```
 
-## Optional Dispatch-Owned ChatGPT Sign-In
+Evidence matching the prediction adds its fixed weight. Contradicting evidence subtracts it. Missing required signals create Evidence Debt. Every outcome can therefore be traced back to a rule and a source record.
 
-Import the ready-to-use helpers from `app/chatgpt-auth.ts` when the site needs
-optional or required ChatGPT sign-in:
+## Evidence Debt
 
-- Use `getChatGPTUser()` for optional signed-in UI.
-- Use `requireChatGPTUser(returnTo)` for server-rendered pages that should send
-  anonymous visitors through Sign in with ChatGPT.
-- Use `chatGPTSignInPath(returnTo)` and `chatGPTSignOutPath(returnTo)` for
-  browser links or actions.
-- Pass a same-origin relative `returnTo` path for the destination after sign-in
-  or sign-out. The helper validates and safely encodes it.
-- Mark protected pages with `export const dynamic = "force-dynamic"` because
-  they depend on per-request identity headers.
+Technical debt describes compromises in implementation. **Evidence Debt** describes important questions a system cannot currently answer.
 
-Dispatch owns `/signin-with-chatgpt`, `/signout-with-chatgpt`, `/callback`, the
-OAuth cookies, and identity header injection. Do not implement app routes for
-those reserved paths. Routes that do not import and call the helper remain
-anonymous-compatible.
+For example: *Did release v2.8.1 directly leak database connections?*
 
-SIWC establishes identity only; it does not prove workspace membership. Use the
-Sites hosting platform's access policy controls for workspace-wide restrictions,
-or enforce explicit server-side membership or allowlist checks.
+If connection lifecycle metrics are not tagged by build SHA, Faultline cannot honestly mark that relationship as directly observed. It records an Evidence Debt item describing the missing signal and the instrumentation required to make the claim testable next time.
 
-Use SIWC for account pages, user-specific dashboards, saved records, and write
-actions tied to the current ChatGPT user. Leave public content anonymous.
+This converts uncertainty into concrete observability work.
 
-## Diagnostic Commands
+## GitHub evidence connection
 
-- `npm run install:ci`: perform the one bounded lockfile install
-- `npm run dev`: start the Vite/Vinext development server
-- `npm run build`: build and validate the deployable Sites artifact
-- `npm run start`: start the built Vinext application
-- `npm test`: build, validate, and verify the rendered development-preview metadata
-- `npm run validate:artifact`: recheck an existing artifact's manifest and ESM `default.fetch` export
-- `npm run db:generate`: generate Drizzle migrations after schema changes
+Faultline is connected to [Sekani-27/Nexara](https://github.com/Sekani-27/Nexara) as its first repository evidence source.
 
-Use build and validation commands for targeted diagnosis after a remote failure, not as part of the normal checkpoint path.
+The Sources workspace imports and normalizes:
 
-The timeout defaults can be overridden for a controlled canary with `SITES_INSTALL_TIMEOUT`, `SITES_INSTALL_KILL_AFTER`, `SITES_BUILD_TIMEOUT`, and `SITES_BUILD_KILL_AFTER`. A timeout fails the command; the helpers never retry an unchanged install or build.
+- Commits and commit SHAs
+- GitHub Actions workflow outcomes
+- Deployment events
+- Pull-request review provenance
+- Timestamps and direct source links
 
-## Learn More
+Imported GitHub activity remains an observation. It affects a causal claim only when its time, service and release identity correlate with the incident under investigation.
 
-- [vinext Documentation](https://github.com/cloudflare/vinext)
-- [Drizzle D1 Guide](https://orm.drizzle.team/docs/get-started/d1-new)
+## Architecture
+
+```mermaid
+flowchart TD
+    A[Engineering sources] --> B[Evidence normalization]
+    B --> C[Canonical event model]
+    C --> D[Deterministic claim engine]
+    D --> E[Support and contradictions]
+    D --> F[Evidence gaps]
+    F --> G[Evidence Debt]
+    E --> H[Human review]
+    G --> H
+    H --> I[Incident Evidence Package]
+```
+
+| Component | Responsibility |
+| --- | --- |
+| Canonical event model | Gives evidence from different systems one consistent shape |
+| Claim engine | Evaluates fixed rules and weights deterministically |
+| Rule trace | Shows why each rule passed, contradicted or lacked evidence |
+| Evidence Debt engine | Generates instrumentation work from missing required signals |
+| Sources workspace | Preserves repository provenance and source links |
+| Review workflow | Keeps a human accountable for adopting the assessment |
+| D1 persistence | Stores investigation selection, debt state and review decision |
+
+## Technology
+
+- TypeScript
+- React 19 and Next.js 16
+- Vinext and Vite
+- Cloudflare Workers and D1
+- Drizzle ORM
+- Node test runner
+- GitHub REST API
+
+## Running locally
+
+### Requirements
+
+- Node.js 22.13 or newer
+- npm
+
+### Setup
+
+```bash
+npm install
+npm run dev
+```
+
+### Validation
+
+```bash
+npm test
+```
+
+The tests verify that the same deterministic rules identify a bad deployment, a traffic surge, a shared dependency failure, and missing signals that must become Evidence Debt.
+
+## Repository structure
+
+```text
+app/                  Product interface
+lib/                  Deterministic evidence engine
+worker/               API, GitHub ingestion and persistence
+db/                   Investigation-state schema
+drizzle/              Database migration
+tests/                 Engine behaviour tests
+public/                Static product assets
+```
+
+## Portfolio significance
+
+Faultline demonstrates more than dashboard design. It combines causal reasoning expressed as software rules, production-incident and observability concepts, evidence provenance, deterministic decision logic, durable workflow state, external engineering-system integration, human accountability and product-level UX.
+
+It is intentionally positioned beside Veriform: Veriform asks whether an engineering decision can be defended **before** implementation; Faultline asks whether an explanation of failure can be defended **after** production impact.
+
+## Current scope
+
+This repository is a functional portfolio prototype. GitHub is the first evidence source, and three curated scenarios exercise the claim engine. Production expansion would add connectors for Prometheus, Kubernetes, OpenTelemetry, Argo CD and incident-management platforms, plus identity-aware multi-user investigations.
+
+## Author
+
+Created by **Ntando Miya** — Johannesburg, South Africa.
+
+Built as part of a portfolio focused on DevOps, platform engineering, observability and deterministic AI-adjacent systems.
