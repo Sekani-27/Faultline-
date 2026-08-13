@@ -3,6 +3,7 @@ export type Signal =
   | "service_only_impact" | "multi_client_impact" | "rollback_recovery"
   | "scale_recovery" | "dependency_recovery" | "connection_growth";
 
+
 export type Evidence = {
   id: string; at: string; observation: string; source: string;
   signal: Signal; value: boolean; quality: "high" | "medium";
