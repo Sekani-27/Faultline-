@@ -13,6 +13,7 @@ function Pill({ value }: { value: string }) {
   return <span className={`status ${cls}`}>{value}</span>;
 }
 
+
 export default function Home() {
   const [scenarioId,setScenarioId] = useState(scenarios[0].id);
   const [claimId,setClaimId] = useState("deployment");
